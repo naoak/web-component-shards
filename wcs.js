@@ -26,6 +26,7 @@ var WebComponentShards = function WebComponentShards(options){
   this.dest_dir = path.resolve(options.dest_dir) + "/";
   this.workdir = options.workdir;
   this.depReport = options.depReport;
+  this.stripExcludes = options.stripExcludes;
   this.built = false;
 };
 
@@ -55,7 +56,7 @@ WebComponentShards.prototype = {
       console.log("FAILED IN GETDEPS");
     });
   },
-  _getCommonDeps: function _getCommonDeps() {
+  _getCommonDeps: function _getCommonDeps(excludes) {
     var endpointDeps = [];
     for (var i = 0; i < this.endpoints.length; i++) {
       endpointDeps.push((function(endpoint) {
@@ -80,14 +81,14 @@ WebComponentShards.prototype = {
       });
       var depsOverThreshold = [];
       for (var dep in common) {
-        if (common[dep] >= this.sharing_threshold) {
+        if (common[dep] >= this.sharing_threshold && (excludes.indexOf(dep) < 0)) {
           depsOverThreshold.push(dep);
         }
       }
       if (this.depReport) {
         var report = allEndpointDeps.reduce(function(prev, value) {
           prev[value.endpoint] = value.deps.filter(function(dep) {
-            return common[dep] < this.sharing_threshold;
+            return (common[dep] < this.sharing_threshold) && (excludes.indexOf(dep) < 0);
           }.bind(this));
           return prev;
         }.bind(this), {});
@@ -102,8 +103,8 @@ WebComponentShards.prototype = {
       return depsOverThreshold;
     }.bind(this));
   },
-  _synthesizeImport: function _synthesizeImport() {
-    return this._getCommonDeps().then(function(commonDeps) {
+  _synthesizeImport: function _synthesizeImport(excludes) {
+    return this._getCommonDeps(excludes).then(function(commonDeps) {
       /** Generate the file of shared imports. */
       var output = '';
       var outputPath = path.resolve(this.workdir, this.shared_import);
@@ -125,17 +126,57 @@ WebComponentShards.prototype = {
       return commonDeps;
     }.bind(this));
   },
+  _flattenExcludes: function _flattenExcludes() {
+    var exDeps = [];
+    for (var i = 0; i < this.stripExcludes.length; i++) {
+      exDeps.push((function(ex) {
+        return this._getDeps(ex).then(function(deps) {
+          return {
+            endpoint: ex,
+            deps: deps
+          };
+        });
+      }.bind(this))(this.stripExcludes[i]));
+    }
+    return Promise.all(exDeps).then(function(allExDeps){
+      var common = {};
+      allExDeps.forEach(function(exDep){
+        if (!common[exDep.endpoint]) {
+          common[exDep.endpoint] = 1;
+        } else {
+          common[exDep.endpoint] += 1;
+        }
+        exDep.deps.forEach(function(dep){
+          if (!common[dep]) {
+            common[dep] = 1;
+          } else {
+            common[dep] += 1;
+          }
+        });
+      });
+      var deps = [];
+      for (var dep in common) {
+        deps.push(dep);
+      }
+      return deps;
+    }.bind(this));
+  },
   _prepOutput: function _prepOutput() {
     mkdirp.sync(this.dest_dir);
   },
   build: function build() {
+    var excludes;
     if (this.built) {
       throw new Error("build may only be called once.");
     }
     this.built = true;
     this._prepOutput();
-    return this._synthesizeImport().then(function (commonDeps) {
+    return this._flattenExcludes().then(function(_excludes) {
+      excludes = _excludes;
+      return this._synthesizeImport(excludes);
+    }.bind(this)).then(function(commonDeps) {
       var endpointsVulcanized = [];
+      var stripExcludes = excludes.concat(commonDeps);
       // Vulcanize each endpoint
       this.endpoints.forEach(function(endpoint){
         var outPath = url.resolve(this.dest_dir, endpoint);
@@ -146,7 +187,7 @@ WebComponentShards.prototype = {
             abspath: null,
             fsResolver: this._getFSResolver(),
             addedImports: [pathToShared],
-            stripExcludes: commonDeps,
+            stripExcludes: stripExcludes,
             inlineScripts: true,
             inlineCss: true,
             inputUrl: endpoint
@@ -192,7 +233,8 @@ WebComponentShards.prototype = {
           fsResolver: { accept: accept },
           inlineScripts: true,
           inlineCss: true,
-          inputUrl: this.shared_import
+          inputUrl: this.shared_import,
+          stripExcludes: excludes
         });
         try {
           vulcan.process(null, function(err, doc) {

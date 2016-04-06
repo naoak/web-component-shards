@@ -90,6 +90,14 @@ var cli = cliArgs([
     alias: "r",
     description: "Name of file that contains a report on the dependencies found " +
     "for each endpoint"
+  },
+  {
+    name: "stripExcludes",
+    type: String,
+    alias: "x",
+    defaultOption: true,
+    multiple: true,
+    description: "stripExcludes options for vulcanize. Restriction: Only html can be set"
   }
 ]);
 
