@@ -81,7 +81,7 @@ WebComponentShards.prototype = {
       });
       var depsOverThreshold = [];
       for (var dep in common) {
-        if (common[dep] >= this.sharing_threshold && (excludes.indexOf(dep) < 0)) {
+        if (common[dep] >= this.sharing_threshold && (excludes.indexOf(dep) < 0) && (this.endpoints.indexOf(dep) < 0)) {
           depsOverThreshold.push(dep);
         }
       }
